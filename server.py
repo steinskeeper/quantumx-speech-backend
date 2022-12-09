@@ -4,6 +4,9 @@ from flask import Flask, flash, request, redirect, url_for, jsonify
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
 import subprocess
+from pymongo import MongoClient
+import json
+import shortuuid
 
 # grammar model
 from happytransformer import HappyTextToText, TTSettings
@@ -20,6 +23,11 @@ UPLOAD_FOLDER = './uploads'
 ALLOWED_EXTENSIONS = {"webm" , "mp4"}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 CORS(app)
+
+# mongo db config
+client = MongoClient("mongodb://localhost:27017/")
+db = client["speechinator"]
+take = db["take"]
 
 
 def allowed_file(filename):
@@ -44,6 +52,13 @@ def processVideo():
         subprocess.call(["ffmpeg", "-y", "-i", "./uploads/video/"+filename, f"./uploads/audio/{filename}.mp3"], 
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.STDOUT)
+                    
+        data = json.loads(request.form["data"])
+        print(data)
+        s = shortuuid.encode(u)
+        short = s[:5]
+        take.insert_one(
+            {"filename": filename, "script": data["script"], "scriptname": data["scriptname"], "practiceid": short})
 
         return jsonify({"message": "Saved" , "code": "success" })
 
