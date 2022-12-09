@@ -3,6 +3,7 @@ from itertools import groupby
 from operator import itemgetter
 from happytransformer import HappyTextToText, TTSettings
 import re
+import uuid
 import whisper
 from flask import Flask
 import os
@@ -15,6 +16,8 @@ import json
 import shortuuid
 import io
 from contextlib import redirect_stdout
+import datetime
+from flask import send_from_directory
 mysp = __import__("my-voice-analysis")
 
 
@@ -58,17 +61,18 @@ def processVideo():
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], "video", filename))
         # clip = VideoFileClip(file)
         # clip.audio.write_audiofile(f"uploads/audio/{filename}.mp3")
-        subprocess.call(["ffmpeg", "-y", "-i", "./uploads/video/"+filename, f"./uploads/audio/{filename}.mp3"],
+        subprocess.call(["ffmpeg", "-y", "-i", "./uploads/video/"+filename, f"./uploads/audio/{filename}.wav"],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.STDOUT)
 
         data = json.loads(request.form["data"])
         print(data)
+        u=uuid.uuid4()
         s = shortuuid.encode(u)
         short = s[:5]
-        result = whisperModel.transcribe("uploads\\audio\\" + filename)
+        result = whisperModel.transcribe("uploads\\audio\\" + filename +".wav")
         take.insert_one(
-            {"filename": filename, "script": data["script"], "scriptname": data["scriptname"], "practiceid": short, "transcribed_script": result["text"]})
+            {"filename": filename,"createdAt":datetime.datetime.now() ,"script": data["script"], "scriptname": data["scriptname"], "practiceid": short, "transcribed_script": result["text"]})
 
         return jsonify({"message": "Saved", "code": "success", "practiceid": short})
 
@@ -115,7 +119,8 @@ def getTake():
         "script": result["script"],
         "transcribedScript": result["transcribed_script"],
         "analytics": result["analytics"],
-        "pastdata": pastdata
+        "pastdata": pastdata,
+        "vidurl": result["filename"]
     }
     return jsonify({"take": final})
 
@@ -125,11 +130,12 @@ def del_ret(d, key):
     return d
 
 
-@app.route(rule="/getalltakes", methods=["GET"])
+@app.route("/getalltakes", methods=["GET"])
 def getTakes():
     takes = []
     result = take.find({})
     for r in result:
+        del r["_id"]
         takes.append(r)
 
     pop = dict(map(lambda k_v: (k_v[0], tuple(map(partial(del_ret, key="scriptname"), k_v[1]))),
@@ -142,21 +148,28 @@ def getTakes():
 def analysis():
     data = request.get_json()
     practiceid = data["practiceid"]
+
     result = take.find_one({"practiceid": practiceid})
-    file = result["filename"]
+
+    fileb = result["filename"]
+    print(fileb)
     script = result["script"]
-    p = file
-    c = r"./uploads/audio"
+    p = fileb
+    c = r"D:\Speechinator-3000\backend\uploads\audio"
 
     sr = io.StringIO()
     with redirect_stdout(sr):
         mysp.myspsr(p, c)
     speechrate = sr.getvalue()
+    speechrate = re.findall("\d+",speechrate)
+    speechrate = int(speechrate[0])
+    print(speechrate)
 
     numpause = io.StringIO()
     with redirect_stdout(numpause):
         mysp.mysppaus(p, c)
     pauses = numpause.getvalue()
+    print(pauses)
     pauses = re.findall("\d+", pauses)
     pauses = int(pauses[0])
 
@@ -181,12 +194,29 @@ def analysis():
         mysp.myspgend(p, c)
     tone = ""
     mood = moodtemp.getvalue()
-    if "Showing no emotion" in tone:
+    print(mood)
+    if "Showing no emotion" in mood:
         tone = "Emotionless"
-    elif "Reading" in tone:
+    elif "Reading" in mood:
         tone = "Reading"
-    elif "passionately" in tone:
+    elif "passionately" in mood:
         tone = "Passionate"
+
+    analytics = {
+        "wpm": speechrate,
+        "pauses": pauses,
+        "speechpercent": speechpercentage,
+        "tone": tone,
+        "redundancy":{}
+    }
+    take.update_one({"practiceid": practiceid}, {
+                    "$set": {"analytics": analytics}})
+    return jsonify({"message": "success"})
+
+@app.route("/sendvid/<path:path>",methods=["GET"])
+def sendvid(path):
+    return send_from_directory("uploads",path)
+
 
 
 if __name__ == "__main__":
