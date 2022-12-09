@@ -4,16 +4,22 @@ from flask import Flask, flash, request, redirect, url_for, jsonify
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
 import subprocess
+
+# grammar model
 from happytransformer import HappyTextToText, TTSettings
 happy_tt = HappyTextToText("T5", "vennify/t5-base-grammar-correction")
 args = TTSettings(num_beams=5, min_length=1)
+
+# transcription -> audio to text
+import whisper
+whisperModel = whisper.load_model("base")
+
 
 app = Flask(__name__)
 UPLOAD_FOLDER = './uploads'
 ALLOWED_EXTENSIONS = {"webm" , "mp4"}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 CORS(app)
-
 
 
 def allowed_file(filename):
@@ -49,8 +55,18 @@ def correctGrammar():
     res = happy_tt.generate_text(text, args=args)
     print(res)
     return jsonify({ "corrected" : res.text })
-    
-    
+
+
+@app.route("/transcribe", methods= ["POST"])
+def transcribe():
+    filename = request.get_json()["filename"]
+    # print(text)
+
+    result  = whisperModel.transcribe("uploads\\audio\\"+ filename)
+    f = open("uploads\\transcription\\" + filename + ".txt" , "x")
+    f.write(result["text"])
+    f.close()
+    return jsonify({ "transcribe" : result["text"] })
 
 if __name__ == "__main__":
     app.run(debug=True)
